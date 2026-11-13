@@ -11,12 +11,33 @@ from app.schemas.complaint import (
     ComplaintResponse,
     ComplaintUpdate,
     ComplaintUpdateItem,
+    DepartmentAssignRequest,
     OfficialStatusUpdate,
 )
 from app.schemas.profile import ProfileResponse
 from app.services.storage_service import storage_service
 
 logger = logging.getLogger(__name__)
+
+VALID_STATUSES = {
+    "Submitted",
+    "Under Review",
+    "Assigned",
+    "In Progress",
+    "Resolved",
+    "Rejected",
+    "Needs More Information",
+}
+
+ALLOWED_TRANSITIONS: Dict[str, set] = {
+    "Submitted": {"Submitted", "Under Review", "Assigned", "Rejected", "Needs More Information"},
+    "Under Review": {"Under Review", "Assigned", "In Progress", "Rejected", "Needs More Information"},
+    "Assigned": {"Assigned", "In Progress", "Under Review", "Rejected", "Needs More Information"},
+    "In Progress": {"In Progress", "Resolved", "Under Review", "Needs More Information", "Rejected"},
+    "Needs More Information": {"Needs More Information", "Submitted", "Under Review", "Assigned", "In Progress", "Rejected"},
+    "Resolved": {"Resolved", "Under Review", "In Progress"},  # Reopening
+    "Rejected": {"Rejected", "Under Review"},  # Appeal / reconsideration
+}
 
 
 class ComplaintService:
@@ -222,8 +243,14 @@ class ComplaintService:
                     detail="Access denied: Restricted safety report requiring designated safety officer authorization.",
                 )
 
-        # 3. Worker authorization: must be assigned to this complaint
+        # 3. Worker authorization: must be assigned to this complaint and cannot access safety reports
         elif current_user.role == "worker":
+            if complaint.get("safety_related"):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: Workers are not authorized to access safety-related reports.",
+                )
+
             # Check assignments table
             assignment_params = {
                 "complaint_id": f"eq.{complaint_id}",
@@ -244,7 +271,33 @@ class ComplaintService:
             "select": "*",
         }
         updates_raw = await supabase_service.rest_query("complaint_updates", method="GET", params=update_params)
-        updates = [ComplaintUpdateItem(**u) for u in updates_raw] if isinstance(updates_raw, list) else []
+
+        updates: List[ComplaintUpdateItem] = []
+        if isinstance(updates_raw, list) and len(updates_raw) > 0:
+            actor_ids = list({str(u["actor_id"]) for u in updates_raw if u.get("actor_id")})
+            actor_map: Dict[str, Dict[str, str]] = {}
+            if actor_ids:
+                try:
+                    actor_params = {
+                        "id": f"in.({','.join(actor_ids)})",
+                        "select": "id,full_name,role",
+                    }
+                    profiles_res = await supabase_service.rest_query("profiles", method="GET", params=actor_params)
+                    if isinstance(profiles_res, list):
+                        for p in profiles_res:
+                            actor_map[str(p["id"])] = {
+                                "name": p.get("full_name") or "Municipal Official",
+                                "role": p.get("role") or "official",
+                            }
+                except Exception as p_exc:
+                    logger.warning(f"Failed to resolve actor profiles: {p_exc}")
+
+            for u in updates_raw:
+                actor_info = actor_map.get(str(u.get("actor_id")), {})
+                u_dict = dict(u)
+                u_dict["actor_name"] = actor_info.get("name", "Municipal Official")
+                u_dict["actor_role"] = actor_info.get("role", "official")
+                updates.append(ComplaintUpdateItem(**u_dict))
 
         # Generate signed URL for image
         if complaint.get("image_url"):
@@ -308,32 +361,77 @@ class ComplaintService:
 
         return ComplaintResponse(**rec)
 
-    async def update_status_as_official(
+    async def validate_department_exists(self, department_id: UUID) -> str:
+        """Validate target department exists in the database and return its name."""
+        dept_records = await supabase_service.rest_query(
+            "departments",
+            method="GET",
+            params={"id": f"eq.{department_id}", "select": "id,name"},
+        )
+        if not dept_records or not isinstance(dept_records, list) or len(dept_records) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Target department with ID '{department_id}' does not exist.",
+            )
+        return dept_records[0].get("name", "Department")
+
+    async def _execute_official_status_update(
         self,
         complaint_id: UUID,
+        detail: ComplaintDetailResponse,
         official: ProfileResponse,
         data: OfficialStatusUpdate,
     ) -> ComplaintResponse:
-        """Update complaint lifecycle status, department, and priority as an official."""
-        # Fetch current record to verify official permissions
-        detail = await self.get_complaint_by_id(complaint_id, official)
-
-        # Safety officer check
+        """Internal execution helper for official status updates and department assignment."""
+        # 1. Safety officer check (authorization first)
         if detail.safety_related and not official.is_safety_officer:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied: Only designated safety officers may update safety-related complaints.",
             )
 
-        # Department boundary check
-        if official.department_id and detail.department_id:
-            if official.department_id != detail.department_id:
+        # 2. Department boundary check (authorization)
+        if official.department_id:
+            # If complaint already belongs to a department, official must belong to that department
+            if detail.department_id and official.department_id != detail.department_id:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Access denied: You are not authorized to update complaints outside your assigned department.",
                 )
+            # Department officials cannot assign or transfer complaints to another department
+            # (An omitted department_id during an ordinary update is None and must not be treated as a reassignment)
+            if data.department_id and data.department_id != official.department_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: Department officials cannot assign or transfer complaints to another department.",
+                )
 
-        # Build update fields
+        # 3. Status validation & transition state machine
+        if data.status not in VALID_STATUSES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status '{data.status}'. Allowed statuses are: {', '.join(sorted(VALID_STATUSES))}",
+            )
+
+        allowed_next = ALLOWED_TRANSITIONS.get(detail.status, set())
+        if data.status not in allowed_next:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status transition from '{detail.status}' to '{data.status}'. Allowed transitions: {', '.join(sorted(allowed_next))}",
+            )
+
+        # 4. Validate target department exists if department_id is supplied
+        target_dept_name: Optional[str] = None
+        if data.department_id:
+            target_dept_name = await self.validate_department_exists(data.department_id)
+
+        # 5. Preserve previous state for compensating rollback
+        old_status = detail.status
+        old_dept_id = str(detail.department_id) if detail.department_id else None
+        old_priority = detail.priority
+        old_severity = detail.severity
+
+        # 6. Build update fields
         update_fields: Dict[str, Any] = {"status": data.status}
         if data.department_id:
             update_fields["department_id"] = str(data.department_id)
@@ -356,20 +454,125 @@ class ComplaintService:
                 detail="Failed to update complaint status in database.",
             )
 
-        # Record history update in complaint_updates
+        # 7. Record history update in complaint_updates with compensating rollback
+        history_remarks = data.remarks.strip()
+        if target_dept_name and data.department_id != detail.department_id:
+            if target_dept_name not in history_remarks:
+                history_remarks = f"Assigned to {target_dept_name}. {history_remarks}"
+
         history_payload = {
             "complaint_id": str(complaint_id),
             "actor_id": str(official.id),
             "status": data.status,
-            "remarks": data.remarks.strip(),
+            "remarks": history_remarks,
         }
-        await supabase_service.rest_query("complaint_updates", method="POST", json_data=history_payload)
+
+        history_success = False
+        try:
+            history_res = await supabase_service.rest_query(
+                "complaint_updates", method="POST", json_data=history_payload
+            )
+            if history_res is not None and history_res is not False:
+                history_success = True
+        except Exception as exc:
+            logger.error(
+                f"Failed to record complaint_updates history for update on {complaint_id}: {exc}",
+                exc_info=True,
+            )
+
+        if not history_success:
+            logger.warning(
+                f"History update insertion failed for complaint {complaint_id}. Initiating compensating rollback."
+            )
+            rollback_fields = {
+                "status": old_status,
+                "department_id": old_dept_id,
+                "priority": old_priority,
+                "severity": old_severity,
+            }
+            rollback_success = False
+            try:
+                rb_res = await supabase_service.rest_query(
+                    "complaints",
+                    method="PATCH",
+                    params={"id": f"eq.{complaint_id}"},
+                    json_data=rollback_fields,
+                )
+                if rb_res is not None and rb_res is not False:
+                    rollback_success = True
+            except Exception as rb_exc:
+                logger.error(
+                    f"Rollback failed to revert complaint {complaint_id} to status {old_status}: {rb_exc}",
+                    exc_info=True,
+                )
+
+            if rollback_success:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to record status update history. Status update was rolled back to previous state.",
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to record status update history. Attention required: automatic rollback of complaint status could not be completed.",
+                )
 
         rec = updated[0]
         if rec.get("image_url"):
             rec["image_signed_url"] = await storage_service.create_signed_url(rec["image_url"])
 
         return ComplaintResponse(**rec)
+
+    async def update_status_as_official(
+        self,
+        complaint_id: UUID,
+        official: ProfileResponse,
+        data: OfficialStatusUpdate,
+    ) -> ComplaintResponse:
+        """Update complaint lifecycle status, department, and priority as an official."""
+        if official.role != "official":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Only authorized officials can update complaint status.",
+            )
+
+        detail = await self.get_complaint_by_id(complaint_id, official)
+        return await self._execute_official_status_update(complaint_id, detail, official, data)
+
+    async def assign_department_as_official(
+        self,
+        complaint_id: UUID,
+        official: ProfileResponse,
+        data: DepartmentAssignRequest,
+    ) -> ComplaintResponse:
+        """Assign or reassign a complaint to a municipal department."""
+        if official.role != "official":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Only authorized officials can assign complaints to departments.",
+            )
+
+        detail = await self.get_complaint_by_id(complaint_id, official)
+
+        # Determine lifecycle transition: default to "Assigned" if currently "Submitted" or "Under Review"
+        new_status = data.status or ("Assigned" if detail.status in ("Submitted", "Under Review") else detail.status)
+        remarks = data.remarks.strip() if data.remarks else "Department assignment"
+
+        status_update = OfficialStatusUpdate(
+            status=new_status,
+            remarks=remarks,
+            department_id=data.department_id,
+        )
+        return await self._execute_official_status_update(complaint_id, detail, official, status_update)
+
+    async def get_complaint_timeline(
+        self,
+        complaint_id: UUID,
+        current_user: ProfileResponse,
+    ) -> List[ComplaintUpdateItem]:
+        """Retrieve chronological status history for a complaint, enforcing ownership and access."""
+        detail = await self.get_complaint_by_id(complaint_id, current_user)
+        return detail.updates
 
     async def list_complaints_for_official(
         self,

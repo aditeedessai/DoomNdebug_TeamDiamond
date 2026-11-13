@@ -55,6 +55,13 @@ class OfficialStatusUpdate(BaseModel):
     severity: Optional[int] = Field(None, ge=1, le=10, description="Updated severity rating 1-10")
 
 
+class DepartmentAssignRequest(BaseModel):
+    """Schema for assigning or reassigning a complaint's department."""
+    department_id: UUID = Field(..., description="Target municipal department ID")
+    remarks: Optional[str] = Field(None, min_length=3, description="Remarks explaining the assignment")
+    status: Optional[ComplaintStatus] = Field(None, description="Optional new lifecycle status (e.g. Assigned)")
+
+
 class ComplaintUpdateItem(BaseModel):
     """Schema for a single status update history record."""
     model_config = ConfigDict(from_attributes=True)
@@ -63,6 +70,7 @@ class ComplaintUpdateItem(BaseModel):
     complaint_id: UUID
     actor_id: UUID
     actor_name: Optional[str] = None
+    actor_role: Optional[str] = None
     status: str
     remarks: str
     created_at: datetime

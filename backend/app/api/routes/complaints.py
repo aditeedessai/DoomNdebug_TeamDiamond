@@ -9,6 +9,8 @@ from app.schemas.complaint import (
     ComplaintDetailResponse,
     ComplaintResponse,
     ComplaintUpdate,
+    ComplaintUpdateItem,
+    DepartmentAssignRequest,
     ImageUploadResponse,
     OfficialStatusUpdate,
 )
@@ -167,6 +169,66 @@ async def update_complaint_status(
 
     Appends an entry to the status history with required official remarks.
     """
+    return await complaint_service.update_status_as_official(
+        complaint_id=id,
+        official=current_user,
+        data=data,
+    )
+
+
+@router.post(
+    "/{id}/assign",
+    response_model=ComplaintResponse,
+    summary="Assign or reassign complaint department (Officials only)",
+)
+async def assign_complaint_department(
+    id: UUID,
+    data: DepartmentAssignRequest,
+    current_user: ProfileResponse = Depends(require_role(["official"])),
+):
+    """Official assigns or reassigns complaint to a municipal department.
+
+    Validates target department exists, checks official department scope,
+    and records an assignment event in the complaint timeline.
+    """
+    return await complaint_service.assign_department_as_official(
+        complaint_id=id,
+        official=current_user,
+        data=data,
+    )
+
+
+@router.get(
+    "/{id}/updates",
+    response_model=List[ComplaintUpdateItem],
+    summary="Retrieve complaint status history timeline",
+)
+async def get_complaint_timeline(
+    id: UUID,
+    current_user: ProfileResponse = Depends(get_current_user),
+):
+    """Retrieve the chronological status history timeline for a complaint.
+
+    Enforces ownership verification for citizens, department authorization for officials,
+    and assigned task validation for workers.
+    """
+    return await complaint_service.get_complaint_timeline(
+        complaint_id=id,
+        current_user=current_user,
+    )
+
+
+@router.post(
+    "/{id}/updates",
+    response_model=ComplaintResponse,
+    summary="Add status update (Officials only - PRD specification)",
+)
+async def add_complaint_status_update(
+    id: UUID,
+    data: OfficialStatusUpdate,
+    current_user: ProfileResponse = Depends(require_role(["official"])),
+):
+    """Official adds a status update and remarks to a complaint."""
     return await complaint_service.update_status_as_official(
         complaint_id=id,
         official=current_user,
