@@ -98,6 +98,38 @@ class SupabaseService:
             pass
         return None
 
+    async def rest_query(
+        self,
+        endpoint_path: str,
+        method: str = "GET",
+        params: Optional[Dict[str, Any]] = None,
+        json_data: Optional[Any] = None,
+        use_service_role: bool = True,
+    ) -> Optional[Any]:
+        """Execute a PostgREST query against the Supabase database."""
+        if not self.is_configured:
+            return None
+
+        url = f"{self.url}/rest/v1/{endpoint_path.lstrip('/')}"
+        headers = self._get_headers(use_service_role=use_service_role)
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.request(
+                    method=method.upper(),
+                    url=url,
+                    params=params,
+                    json=json_data,
+                    headers=headers,
+                )
+                if resp.status_code in (200, 201, 204):
+                    if resp.status_code == 204 or not resp.text:
+                        return True
+                    return resp.json()
+        except Exception:
+            pass
+        return None
+
     async def sign_up_citizen(self, email: str, password: str, full_name: str, phone: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Register a new citizen through Supabase Auth (trigger handles profile creation)."""
         if not self.is_configured:
