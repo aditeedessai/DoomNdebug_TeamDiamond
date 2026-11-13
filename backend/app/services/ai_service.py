@@ -1,6 +1,6 @@
 """AI and Intelligence service for complaint understanding, classification, and multimodal image analysis.
 
-Task: M3-05 Optional Image Understanding
+Task: M3-06 Fallback and Validation Hardening
 Author: Member 3 (AI & Intelligence Developer)
 Target File: backend/app/services/ai_service.py
 """
@@ -484,6 +484,57 @@ JSON Response:"""
             logger.error("Gemini API request failed: %s", type(req_err).__name__)
             raise RuntimeError("Gemini API request failed to complete.") from req_err
 
+    def _normalize_response(self, response: AIAnalysisResponse) -> AIAnalysisResponse:
+        """Apply defensive municipal business logic to validated model output.
+
+        Rules:
+        A. Safety consistency:
+           - If is_safety_related is False and safety_category is not None -> safety_category = None
+           - If is_safety_related is True and safety_category is None -> safety_category = "Unverified safety concern"
+        B. Mandatory human review:
+           - If department is None or category == "Other" -> force needs_human_review = True
+           - If this enforcement occurs and review_reason is missing/blank ->
+             review_reason = "Unassigned civic complaint requires official department triage."
+        C. Review reason completeness:
+           - Whenever needs_human_review is True, ensure review_reason is a non-empty, non-whitespace string.
+           - If missing or blank -> review_reason = "Submission flagged for manual official triage."
+        D. Validation:
+           - Reconstructs and validates updated result using AIAnalysisResponse.model_validate().
+           - Returns original response instance if no updates were needed.
+        """
+        data = response.model_dump()
+        modified = False
+
+        # Rule A: Safety consistency
+        if not data.get("is_safety_related") and data.get("safety_category") is not None:
+            data["safety_category"] = None
+            modified = True
+        elif data.get("is_safety_related") and data.get("safety_category") is None:
+            data["safety_category"] = "Unverified safety concern"
+            modified = True
+
+        # Rule B: Mandatory human review for unassigned department or 'Other' category
+        if data.get("department") is None or data.get("category") == "Other":
+            if not data.get("needs_human_review"):
+                data["needs_human_review"] = True
+                modified = True
+                curr_reason = data.get("review_reason")
+                if not curr_reason or not str(curr_reason).strip():
+                    data["review_reason"] = "Unassigned civic complaint requires official department triage."
+
+        # Rule C: Review reason completeness whenever needs_human_review is True
+        if data.get("needs_human_review"):
+            curr_reason = data.get("review_reason")
+            if not curr_reason or not str(curr_reason).strip():
+                data["review_reason"] = "Submission flagged for manual official triage."
+                modified = True
+
+        if not modified:
+            return response
+
+        # Rule D: Reconstruct and validate through model_validate
+        return AIAnalysisResponse.model_validate(data)
+
     def get_fallback_response(self, request: AIAnalysisRequest, reason: str) -> AIAnalysisResponse:
         """Construct a deterministic fallback response for ambiguous complaints or AI errors."""
         return AIAnalysisResponse(
@@ -608,7 +659,10 @@ JSON Response:"""
 
             # Validate against Pydantic schema (preserves needs_human_review=True whenever set by model)
             response = AIAnalysisResponse.model_validate(parsed_data)
-            return response
+
+            # M3-06: Apply defensive municipal business logic and normalization
+            normalized_response = self._normalize_response(response)
+            return normalized_response
 
         except json.JSONDecodeError as json_err:
             logger.error("Failed to decode JSON from Gemini classification: %s", type(json_err).__name__)
