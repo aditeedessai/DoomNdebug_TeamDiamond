@@ -1,10 +1,13 @@
 """Complaint service implementing business logic, ownership checks, and status history."""
+import asyncio
+import contextlib
 import logging
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 from fastapi import HTTPException, status
 
 from app.database.supabase import supabase_service
+from app.schemas.ai import AIAnalysisRequest, AIAnalysisResponse
 from app.schemas.complaint import (
     ComplaintCreate,
     ComplaintDetailResponse,
@@ -12,9 +15,13 @@ from app.schemas.complaint import (
     ComplaintUpdate,
     ComplaintUpdateItem,
     DepartmentAssignRequest,
+    DuplicateLinkRequest,
     OfficialStatusUpdate,
 )
 from app.schemas.profile import ProfileResponse
+from app.services.ai_service import ai_service
+from app.services.duplicate_service import duplicate_service
+from app.services.priority_service import priority_service
 from app.services.storage_service import storage_service
 
 logger = logging.getLogger(__name__)
@@ -43,6 +50,42 @@ ALLOWED_TRANSITIONS: Dict[str, set] = {
 class ComplaintService:
     """Service layer for complaint management and history tracking."""
 
+    def __init__(self):
+        # In-memory lock management for serializing concurrent duplicate-linking operations per master ID
+        # Reference counting ensures idle locks are deleted, preventing unbounded dictionary growth.
+        # LIMITATION DOCUMENTATION:
+        # This lock protects only requests handled by the same FastAPI process. It does not
+        # guarantee concurrency safety across multiple Uvicorn workers, server processes or
+        # container replicas. The long-term production solution requires a database-side
+        # transaction and atomic report-count update.
+        self._master_locks: Dict[str, asyncio.Lock] = {}
+        self._master_lock_refcounts: Dict[str, int] = {}
+        self._master_lock_mgmt: asyncio.Lock = asyncio.Lock()
+
+    @contextlib.asynccontextmanager
+    async def _get_master_lock(self, master_id_str: str):
+        """Acquire an in-memory lock for a specific master incident ID.
+
+        Serializes concurrent duplicate-linking operations targeting the same master.
+        Reference counting ensures idle locks are deleted to prevent unbounded dictionary growth.
+        """
+        async with self._master_lock_mgmt:
+            if master_id_str not in self._master_locks:
+                self._master_locks[master_id_str] = asyncio.Lock()
+                self._master_lock_refcounts[master_id_str] = 0
+            self._master_lock_refcounts[master_id_str] += 1
+            lock = self._master_locks[master_id_str]
+
+        async with lock:
+            try:
+                yield
+            finally:
+                async with self._master_lock_mgmt:
+                    self._master_lock_refcounts[master_id_str] -= 1
+                    if self._master_lock_refcounts[master_id_str] <= 0:
+                        self._master_locks.pop(master_id_str, None)
+                        self._master_lock_refcounts.pop(master_id_str, None)
+
     async def create_complaint(
         self,
         citizen: ProfileResponse,
@@ -59,22 +102,81 @@ class ComplaintService:
                     detail="Unauthorized: You cannot link an image uploaded by another user.",
                 )
 
-        # 2. Build payload (derived fields strictly protected from user input)
+        # 2. Invoke Member 3 AI analysis (Gemini multimodal or deterministic fallback)
+        ai_request = AIAnalysisRequest(
+            description=data.description.strip(),
+            latitude=data.latitude,
+            longitude=data.longitude,
+            image_url=data.image_url,
+        )
+        try:
+            ai_result = await ai_service.analyze_complaint(ai_request)
+        except Exception as ai_exc:
+            logger.warning(f"AI analysis failed with exception: {ai_exc}. Using deterministic fallback.")
+            ai_result = ai_service.get_fallback_response(
+                ai_request,
+                reason="AI analysis service unavailable. Queued for manual triage.",
+            )
+
+        # 3. Calculate deterministic priority using Member 3 priority service
+        calculated_priority = priority_service.calculate_priority(
+            severity=ai_result.severity,
+            report_count=1,
+            overdue_bonus=0,
+        )
+
+        # 4. Resolve AI department against departments table
+        resolved_dept_id: Optional[str] = None
+        if ai_result.department:
+            try:
+                dept_records = await supabase_service.rest_query(
+                    "departments",
+                    method="GET",
+                    params={"name": f"eq.{ai_result.department}", "select": "id"},
+                )
+                if dept_records and isinstance(dept_records, list) and len(dept_records) > 0:
+                    resolved_dept_id = str(dept_records[0]["id"])
+            except Exception as d_exc:
+                logger.warning(f"Failed to query department ID for '{ai_result.department}': {d_exc}")
+                resolved_dept_id = None
+
+        # 5. Apply safety union rule: citizen intent is never downgraded
+        effective_safety = bool(data.safety_related or ai_result.is_safety_related)
+        effective_safety_category = data.safety_category or (
+            ai_result.safety_category if effective_safety else None
+        )
+
+        # 6. Category and issue type resolution
+        final_category = (
+            ai_result.category
+            if (ai_result.category and ai_result.category != "Other")
+            else (data.category.strip() if data.category else "Other")
+        )
+        final_issue_type = (
+            ai_result.issue_type
+            if (ai_result.issue_type and ai_result.issue_type != "Unspecified Civic Concern")
+            else (data.issue_type.strip() if data.issue_type else "Civic Concern")
+        )
+        final_title = data.title.strip() if data.title else ai_result.suggested_title
+
+        # 7. Build payload (derived fields strictly protected from user input)
         payload = {
             "citizen_id": citizen_id_str,
-            "title": data.title.strip(),
+            "title": final_title,
             "description": data.description.strip(),
             "latitude": data.latitude,
             "longitude": data.longitude,
-            "category": data.category.strip(),
-            "issue_type": data.issue_type.strip(),
+            "category": final_category,
+            "issue_type": final_issue_type,
+            "department_id": resolved_dept_id,
             "image_url": data.image_url,
-            "safety_related": data.safety_related,
-            "safety_category": data.safety_category,
+            "safety_related": effective_safety,
+            "safety_category": effective_safety_category,
             "status": "Submitted",
-            "priority": "Medium",
-            "severity": 5,
+            "priority": calculated_priority,
+            "severity": ai_result.severity,
             "report_count": 1,
+            "ai_summary": ai_result.summary,
         }
 
         # 3. Persist to database
@@ -303,9 +405,48 @@ class ComplaintService:
         if complaint.get("image_url"):
             complaint["image_signed_url"] = await storage_service.create_signed_url(complaint["image_url"])
 
+        # Advisory duplicate detection (Authorized officials only)
+        duplicates: List[Dict[str, Any]] = []
+        if current_user.role == "official":
+            try:
+                raw_dupes = await duplicate_service.find_duplicates(
+                    category=complaint.get("category", ""),
+                    latitude=complaint.get("latitude"),
+                    longitude=complaint.get("longitude"),
+                    exclude_complaint_id=complaint_id,
+                    radius_metres=100.0,
+                    active_only=True,
+                )
+                if raw_dupes:
+                    if not current_user.is_safety_officer:
+                        candidate_ids = [
+                            str(d.get("complaint_id") or d.get("id")).strip()
+                            for d in raw_dupes
+                            if (d.get("complaint_id") or d.get("id"))
+                        ]
+                        if candidate_ids:
+                            safety_records = await supabase_service.rest_query(
+                                "complaints",
+                                method="GET",
+                                params={"id": f"in.({','.join(candidate_ids)})", "safety_related": "eq.true", "select": "id"},
+                            )
+                            safety_ids = {str(r["id"]) for r in (safety_records or []) if isinstance(r, dict)}
+                            duplicates = [
+                                d for d in raw_dupes
+                                if str(d.get("complaint_id") or d.get("id") or "").strip() not in safety_ids
+                            ]
+                        else:
+                            duplicates = raw_dupes
+                    else:
+                        duplicates = raw_dupes
+            except Exception as dup_exc:
+                logger.warning(f"Advisory duplicate detection failed: {dup_exc}")
+                duplicates = []
+
         return ComplaintDetailResponse(
             **complaint,
             updates=updates,
+            duplicates=duplicates,
         )
 
     async def update_complaint_as_citizen(
@@ -637,6 +778,314 @@ class ComplaintService:
             results.append(ComplaintResponse(**r))
 
         return results
+
+    async def link_duplicate_complaint(
+        self,
+        child_id: UUID,
+        master_id: UUID,
+        official: ProfileResponse,
+    ) -> ComplaintResponse:
+        """Official links an active complaint as a duplicate of a master incident.
+
+        Acquires an in-memory lock per master incident ID to serialize concurrent requests
+        within the same FastAPI process and implements multi-step compensating rollback.
+        """
+        if official.role != "official":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Only authorized officials can link duplicate complaints.",
+            )
+
+        if str(child_id) == str(master_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A complaint cannot be linked to itself as a duplicate.",
+            )
+
+        # Acquire per-master lock to serialize concurrent link operations in this process
+        async with self._get_master_lock(str(master_id)):
+            # 1. Validate that both complaints exist
+            child_records = await supabase_service.rest_query(
+                "complaints",
+                method="GET",
+                params={"id": f"eq.{child_id}", "select": "*"},
+            )
+            if not child_records or not isinstance(child_records, list) or len(child_records) == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Child complaint with ID '{child_id}' not found.",
+                )
+            child = child_records[0]
+
+            master_records = await supabase_service.rest_query(
+                "complaints",
+                method="GET",
+                params={"id": f"eq.{master_id}", "select": "*"},
+            )
+            if not master_records or not isinstance(master_records, list) or len(master_records) == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Master complaint with ID '{master_id}' not found.",
+                )
+            master = master_records[0]
+
+            # 2. Validate official's department access to both records
+            if official.department_id:
+                if child.get("department_id") and str(child.get("department_id")) != str(official.department_id):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Access denied: You cannot link complaints belonging to another department.",
+                    )
+                if master.get("department_id") and str(master.get("department_id")) != str(official.department_id):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Access denied: You cannot link complaints belonging to another department.",
+                    )
+
+            # Cross-department check: if both are assigned, they must belong to the same department
+            if (
+                child.get("department_id")
+                and master.get("department_id")
+                and str(child.get("department_id")) != str(master.get("department_id"))
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot link duplicate complaints across conflicting municipal departments.",
+                )
+
+            # 3. Enforce safety-officer restrictions for safety-related records
+            is_safety = bool(child.get("safety_related") or master.get("safety_related"))
+            if is_safety and not official.is_safety_officer:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: Safety-related complaints can only be linked by a designated safety officer.",
+                )
+
+            # 4. Prevent circular or invalid master relationships
+            if master.get("master_incident_id") is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Target complaint '{master_id}' is already a duplicate child of incident '{master.get('master_incident_id')}'.",
+                )
+
+            # Direct circular link: check if master is already linked to child
+            if str(child.get("id")) == str(master.get("master_incident_id")):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Circular link rejected: Master is already linked to this child.",
+                )
+
+            # Child cannot already be a master with linked duplicate reports
+            existing_children = await supabase_service.rest_query(
+                "complaints",
+                method="GET",
+                params={"master_incident_id": f"eq.{child_id}", "select": "id"},
+            )
+            if existing_children and isinstance(existing_children, list) and len(existing_children) > 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot link complaint: This complaint is already a master incident with linked duplicate reports.",
+                )
+
+            # 5. Prevent duplicate linking from incrementing the master count more than once
+            if child.get("master_incident_id"):
+                if str(child.get("master_incident_id")) == str(master_id):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Complaint '{child_id}' is already linked to master incident '{master_id}'.",
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Complaint '{child_id}' is already linked to another master incident '{child.get('master_incident_id')}'.",
+                    )
+
+            # Retain exact previous values for compensating rollback
+            prev_child_master_id = child.get("master_incident_id")
+            prev_master_count = int(master.get("report_count") or 1)
+            prev_master_priority = master.get("priority") or "Medium"
+
+            # Mutation tracking
+            child_updated = False
+            master_updated = False
+            created_child_history_id: Optional[str] = None
+            created_master_history_id: Optional[str] = None
+
+            async def _rollback_linking(failed_step: str, original_exc: Optional[Exception] = None):
+                """Execute compensating rollback for partially completed duplicate-linking mutations."""
+                rollback_errors = []
+
+                # Rollback 1: Delete master history entry if created
+                if created_master_history_id:
+                    try:
+                        del_m = await supabase_service.rest_query(
+                            "complaint_updates",
+                            method="DELETE",
+                            params={"id": f"eq.{created_master_history_id}"},
+                        )
+                        if del_m is None or del_m is False:
+                            rollback_errors.append(f"Failed to delete master history entry '{created_master_history_id}'")
+                    except Exception as del_err:
+                        rollback_errors.append(f"Exception deleting master history entry: {del_err}")
+
+                # Rollback 2: Delete child history entry if created
+                if created_child_history_id:
+                    try:
+                        del_c = await supabase_service.rest_query(
+                            "complaint_updates",
+                            method="DELETE",
+                            params={"id": f"eq.{created_child_history_id}"},
+                        )
+                        if del_c is None or del_c is False:
+                            rollback_errors.append(f"Failed to delete child history entry '{created_child_history_id}'")
+                    except Exception as del_err:
+                        rollback_errors.append(f"Exception deleting child history entry: {del_err}")
+
+                # Rollback 3: Restore master complaint report_count and priority
+                if master_updated:
+                    try:
+                        rb_master_payload = {
+                            "report_count": prev_master_count,
+                            "priority": prev_master_priority,
+                        }
+                        rb_m = await supabase_service.rest_query(
+                            "complaints",
+                            method="PATCH",
+                            params={"id": f"eq.{master_id}"},
+                            json_data=rb_master_payload,
+                        )
+                        if not rb_m or not isinstance(rb_m, list) or len(rb_m) == 0:
+                            rollback_errors.append(f"Failed to restore master complaint '{master_id}' count and priority")
+                    except Exception as rb_m_err:
+                        rollback_errors.append(f"Exception restoring master complaint '{master_id}': {rb_m_err}")
+
+                # Rollback 4: Restore child complaint master_incident_id
+                if child_updated:
+                    try:
+                        rb_child_payload = {"master_incident_id": prev_child_master_id}
+                        rb_c = await supabase_service.rest_query(
+                            "complaints",
+                            method="PATCH",
+                            params={"id": f"eq.{child_id}"},
+                            json_data=rb_child_payload,
+                        )
+                        if not rb_c or not isinstance(rb_c, list) or len(rb_c) == 0:
+                            rollback_errors.append(f"Failed to restore child complaint '{child_id}' master_incident_id")
+                    except Exception as rb_c_err:
+                        rollback_errors.append(f"Exception restoring child complaint '{child_id}': {rb_c_err}")
+
+                if rollback_errors:
+                    logger.error(
+                        f"Duplicate linking rollback failed after {failed_step}. Rollback errors: {rollback_errors}. Original error: {original_exc}",
+                        exc_info=True,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Failed to complete duplicate link ({failed_step}). Attention required: compensating rollback could not be fully completed.",
+                    )
+                else:
+                    logger.info(f"Duplicate linking compensating rollback succeeded after {failed_step} failed.")
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Failed to complete duplicate link ({failed_step}). Automatic compensating rollback completed successfully.",
+                    )
+
+            # 6. Set child's master_incident_id (do not silently change child status)
+            child_update_payload = {
+                "master_incident_id": str(master_id),
+            }
+            try:
+                child_updated_res = await supabase_service.rest_query(
+                    "complaints",
+                    method="PATCH",
+                    params={"id": f"eq.{child_id}"},
+                    json_data=child_update_payload,
+                )
+                if not child_updated_res or not isinstance(child_updated_res, list) or len(child_updated_res) == 0:
+                    raise RuntimeError("Database returned empty result when updating child complaint")
+                child_updated = True
+            except Exception as child_err:
+                logger.error(f"Failed to update child complaint {child_id}: {child_err}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to update child complaint with master incident link.",
+                )
+
+            # 7. Increment master report_count exactly once & recalculate priority
+            new_master_count = prev_master_count + 1
+            master_severity = int(master.get("severity") or 5)
+            new_master_priority = priority_service.calculate_priority(
+                severity=master_severity,
+                report_count=new_master_count,
+                overdue_bonus=0,
+            )
+
+            master_update_payload = {
+                "report_count": new_master_count,
+                "priority": new_master_priority,
+            }
+            try:
+                master_updated_res = await supabase_service.rest_query(
+                    "complaints",
+                    method="PATCH",
+                    params={"id": f"eq.{master_id}"},
+                    json_data=master_update_payload,
+                )
+                if not master_updated_res or not isinstance(master_updated_res, list) or len(master_updated_res) == 0:
+                    await _rollback_linking("master complaint update", RuntimeError("Empty result from master update"))
+                master_updated = True
+            except HTTPException:
+                raise
+            except Exception as master_err:
+                await _rollback_linking("master complaint update", master_err)
+
+            # 8. Record the linking action in complaint_updates with actor and remarks
+            child_curr_status = child.get("status", "Submitted")
+            master_curr_status = master.get("status", "Submitted")
+
+            child_history_payload = {
+                "complaint_id": str(child_id),
+                "actor_id": str(official.id),
+                "status": child_curr_status,
+                "remarks": f"Linked as duplicate to master incident {master_id} by official {official.full_name}",
+            }
+            try:
+                ch_res = await supabase_service.rest_query(
+                    "complaint_updates", method="POST", json_data=child_history_payload
+                )
+                if ch_res and isinstance(ch_res, list) and len(ch_res) > 0 and ch_res[0].get("id"):
+                    created_child_history_id = str(ch_res[0]["id"])
+                elif ch_res is False or ch_res is None:
+                    await _rollback_linking("child history logging", RuntimeError("Failed to insert child history"))
+            except HTTPException:
+                raise
+            except Exception as ch_err:
+                await _rollback_linking("child history logging", ch_err)
+
+            master_history_payload = {
+                "complaint_id": str(master_id),
+                "actor_id": str(official.id),
+                "status": master_curr_status,
+                "remarks": f"Community report count incremented to {new_master_count} (priority updated to {new_master_priority}) via duplicate link from complaint {child_id} by official {official.full_name}",
+            }
+            try:
+                mh_res = await supabase_service.rest_query(
+                    "complaint_updates", method="POST", json_data=master_history_payload
+                )
+                if mh_res and isinstance(mh_res, list) and len(mh_res) > 0 and mh_res[0].get("id"):
+                    created_master_history_id = str(mh_res[0]["id"])
+                elif mh_res is False or mh_res is None:
+                    await _rollback_linking("master history logging", RuntimeError("Failed to insert master history"))
+            except HTTPException:
+                raise
+            except Exception as mh_err:
+                await _rollback_linking("master history logging", mh_err)
+
+            child_res = child_updated_res[0]
+            if child_res.get("image_url"):
+                child_res["image_signed_url"] = await storage_service.create_signed_url(child_res["image_url"])
+
+            return ComplaintResponse(**child_res)
 
 
 # Global complaint service instance

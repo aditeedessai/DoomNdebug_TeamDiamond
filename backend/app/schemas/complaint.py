@@ -1,6 +1,6 @@
 """Pydantic schemas for Complaint CRUD and Image Upload."""
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -106,8 +106,17 @@ class ComplaintResponse(BaseModel):
 
 
 class ComplaintDetailResponse(ComplaintResponse):
-    """Detailed complaint view including the timeline of updates."""
+    """Detailed complaint view including the timeline of updates and optional advisory duplicates."""
     updates: List[ComplaintUpdateItem] = []
+    duplicates: Optional[List[Dict[str, Any]]] = Field(
+        default_factory=list,
+        description="Advisory duplicate complaints within proximity (Officials only)",
+    )
+
+
+class DuplicateLinkRequest(BaseModel):
+    """Schema for linking a duplicate complaint to a master incident."""
+    master_id: UUID = Field(..., description="Target master incident complaint UUID")
 
 
 class ImageUploadResponse(BaseModel):

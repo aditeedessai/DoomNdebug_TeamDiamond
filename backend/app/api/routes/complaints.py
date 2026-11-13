@@ -11,6 +11,7 @@ from app.schemas.complaint import (
     ComplaintUpdate,
     ComplaintUpdateItem,
     DepartmentAssignRequest,
+    DuplicateLinkRequest,
     ImageUploadResponse,
     OfficialStatusUpdate,
 )
@@ -233,5 +234,27 @@ async def add_complaint_status_update(
         complaint_id=id,
         official=current_user,
         data=data,
+    )
+
+
+@router.post(
+    "/{id}/link-duplicate",
+    response_model=ComplaintResponse,
+    summary="Link a duplicate complaint to a master incident (Officials only)",
+)
+async def link_duplicate_complaint(
+    id: UUID,
+    data: DuplicateLinkRequest,
+    current_user: ProfileResponse = Depends(require_role(["official"])),
+):
+    """Official links an active complaint as a duplicate of a master incident.
+
+    Validates department access, safety scopes, prevents circular/self-linking,
+    increments master report_count exactly once, recalculates priority, and records timeline history.
+    """
+    return await complaint_service.link_duplicate_complaint(
+        child_id=id,
+        master_id=data.master_id,
+        official=current_user,
     )
 
