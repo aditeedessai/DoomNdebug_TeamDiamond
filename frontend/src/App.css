@@ -1,0 +1,100 @@
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  margin: 0;
+  width: 100%;
+  min-height: 100%;
+  background: #080e17;
+  font-family: Arial, sans-serif;
+}
+
+.goa-map-wrapper {
+  width: 100%;
+  min-height: 100vh;
+  padding: 24px;
+  background: #080e17;
+  color: #edf5f7;
+}
+
+.map-top-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.map-eyebrow {
+  color: #56d6bd;
+  font-size: 11px;
+  letter-spacing: 2px;
+}
+
+.map-top-label h2 {
+  margin: 8px 0 0;
+  font-size: 25px;
+}
+
+.map-live-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #b4c5cc;
+  font-size: 12px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #56d6bd;
+  box-shadow: 0 0 10px #56d6bd;
+}
+
+.cesium-map {
+  width: 100%;
+  height: 78vh;
+  min-height: 480px;
+  overflow: hidden;
+  border: 1px solid #263b49;
+  border-radius: 12px;
+  background: #101b27;
+}
+
+.map-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  color: #8295a2;
+  font-size: 10px;
+  letter-spacing: 1.2px;
+}
+
+.map-error {
+  padding: 12px;
+  margin-bottom: 12px;
+  color: #ffaaaa;
+  background: #351b24;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  .goa-map-wrapper {
+    padding: 12px;
+  }
+
+  .map-top-label {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .cesium-map {
+    height: 70vh;
+    min-height: 400px;
+  }
+}
