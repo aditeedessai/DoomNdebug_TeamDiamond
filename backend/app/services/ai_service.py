@@ -1,12 +1,15 @@
-"""AI and Intelligence service for complaint understanding and classification.
+"""AI and Intelligence service for complaint understanding, classification, and multimodal image analysis.
 
-Task: M3-04 English and Hindi Handling
+Task: M3-05 Optional Image Understanding
 Author: Member 3 (AI & Intelligence Developer)
 Target File: backend/app/services/ai_service.py
 """
+import base64
 import json
 import logging
-from typing import Any, Dict, Optional
+import time
+import urllib.parse
+from typing import Any, Dict, Optional, Tuple
 import httpx
 
 from app.core.config import settings
@@ -19,9 +22,12 @@ class AIService:
     """Service wrapper for interacting with Google Gemini API and managing AI intelligence workflows."""
 
     # Model configuration
-    DEFAULT_MODEL: str = "gemini-3.8-flash"
+    DEFAULT_MODEL: str = "gemini-3.5-flash"
     BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/models"
-    TIMEOUT_SECONDS: float = 8.0
+    TOTAL_TIMEOUT_SECONDS: float = 8.0
+    TIMEOUT_SECONDS: float = 8.0  # Retained for backward compatibility
+    MAX_IMAGE_SIZE_BYTES: int = 5 * 1024 * 1024  # 5 MB
+    MIN_RETRY_REMAINING_SECONDS: float = 3.0
 
     def __init__(self, model_name: Optional[str] = None):
         self.model_name: str = model_name or self.DEFAULT_MODEL
@@ -31,7 +37,181 @@ class AIService:
         """Check whether the Gemini API key is present and non-empty."""
         return bool(settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip())
 
-    def _build_classification_prompt(self, request: AIAnalysisRequest) -> str:
+    def _resolve_image_target(self, raw_url_or_path: str) -> Optional[Tuple[str, Dict[str, str]]]:
+        """Validate against Supabase project host, reject untrusted hosts, and return (target_url, headers).
+
+        Security constraints:
+        - Scheme must be HTTPS and port 443 (or default).
+        - URLs with username/password credentials are rejected.
+        - Host must match settings.SUPABASE_URL hostname exactly.
+        - Full URLs must target the 'complaint-images' bucket under /storage/v1/object/.
+        - Traversal (..), backslashes, and null bytes are rejected.
+        - Service-role headers are used ONLY for authenticated object-path downloads;
+          signed URLs do not receive service-role headers.
+        """
+        if not raw_url_or_path or not raw_url_or_path.strip():
+            return None
+
+        cleaned_input = raw_url_or_path.strip()
+
+        # Reject path traversal, backslashes, or null bytes
+        lowered = cleaned_input.lower()
+        if (
+            "\\" in cleaned_input
+            or "%5c" in lowered
+            or ".." in cleaned_input
+            or "%2e%2e" in lowered
+            or "\x00" in cleaned_input
+            or "%00" in lowered
+        ):
+            logger.warning("Rejected suspicious image path containing backslash or traversal sequence.")
+            return None
+
+        supabase_base = (settings.SUPABASE_URL or "").strip().rstrip("/")
+        if not supabase_base:
+            logger.warning("SUPABASE_URL is not configured; cannot validate or resolve complaint image.")
+            return None
+
+        supabase_parsed = urllib.parse.urlparse(supabase_base)
+        expected_host = (supabase_parsed.hostname or "").lower()
+        if not expected_host:
+            logger.warning("Configured SUPABASE_URL has no valid hostname.")
+            return None
+
+        # Case 1: Full URL
+        if cleaned_input.startswith("https://") or "://" in cleaned_input:
+            parsed = urllib.parse.urlparse(cleaned_input)
+
+            # Enforce HTTPS
+            if parsed.scheme.lower() != "https":
+                logger.warning("Rejected non-HTTPS image URL: %s", parsed.scheme)
+                return None
+
+            # Enforce port 443 (standard port is None when omitted in HTTPS URLs)
+            if parsed.port is not None and parsed.port != 443:
+                logger.warning("Rejected non-standard port in image URL: %s", parsed.port)
+                return None
+
+            # Reject embedded credentials (userinfo)
+            if parsed.username or parsed.password:
+                logger.warning("Rejected image URL containing embedded user credentials.")
+                return None
+
+            # Enforce exact host match
+            input_host = (parsed.hostname or "").lower()
+            if input_host != expected_host:
+                logger.warning("Rejected image URL from untrusted host '%s' (expected '%s')", input_host, expected_host)
+                return None
+
+            # Path must target complaint-images bucket under /storage/v1/object/
+            path_unquoted = urllib.parse.unquote(parsed.path)
+            valid_prefixes = (
+                "/storage/v1/object/complaint-images/",
+                "/storage/v1/object/sign/complaint-images/",
+                "/storage/v1/object/public/complaint-images/",
+            )
+            if not any(path_unquoted.startswith(prefix) for prefix in valid_prefixes):
+                logger.warning("Rejected image URL targeting unauthorized storage path or bucket: %s", parsed.path)
+                return None
+
+            # Signed or public URLs already carry authentication tokens or are public;
+            # DO NOT attach service-role credentials to signed URLs
+            headers: Dict[str, str] = {}
+            is_signed_or_token = "/sign/" in path_unquoted or bool(parsed.query and ("token" in parsed.query.lower()))
+            if not is_signed_or_token and settings.SUPABASE_SERVICE_ROLE_KEY and settings.SUPABASE_SERVICE_ROLE_KEY.strip():
+                headers = {
+                    "apikey": settings.SUPABASE_SERVICE_ROLE_KEY.strip(),
+                    "Authorization": f"Bearer {settings.SUPABASE_SERVICE_ROLE_KEY.strip()}",
+                }
+
+            return cleaned_input, headers
+
+        # Case 2: Relative object path
+        norm_path = cleaned_input.lstrip("/")
+        if norm_path.startswith("complaint-images/"):
+            norm_path = norm_path[len("complaint-images/"):].lstrip("/")
+
+        if not norm_path.startswith("complaints/"):
+            logger.warning("Rejected object path outside 'complaints/' namespace: %s", norm_path)
+            return None
+
+        target_url = f"{supabase_base}/storage/v1/object/complaint-images/{norm_path}"
+        headers = {}
+        if settings.SUPABASE_SERVICE_ROLE_KEY and settings.SUPABASE_SERVICE_ROLE_KEY.strip():
+            headers = {
+                "apikey": settings.SUPABASE_SERVICE_ROLE_KEY.strip(),
+                "Authorization": f"Bearer {settings.SUPABASE_SERVICE_ROLE_KEY.strip()}",
+            }
+
+        return target_url, headers
+
+    def _detect_image_mime(self, buffer: bytes) -> Optional[str]:
+        """Inspect file header magic bytes to verify allowed image formats (JPEG, PNG, WebP)."""
+        if len(buffer) < 12:
+            return None
+        if buffer.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg"
+        if buffer.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+        if buffer.startswith(b"RIFF") and buffer[8:12] == b"WEBP":
+            return "image/webp"
+        return None
+
+    async def _download_and_verify_image(
+        self,
+        target_url: str,
+        headers: Dict[str, str],
+        timeout_seconds: float,
+    ) -> Optional[Tuple[bytes, str]]:
+        """Stream chunks up to 5 MB with follow_redirects=False and verify JPEG/PNG/WebP magic bytes."""
+        if timeout_seconds <= 0.5:
+            logger.warning("Insufficient time budget (%.2fs) for image download; skipping.", timeout_seconds)
+            return None
+
+        try:
+            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+                async with client.stream("GET", target_url, headers=headers, follow_redirects=False) as response:
+                    # Reject redirects explicitly (301, 302, 303, 307, 308)
+                    if response.status_code in (301, 302, 303, 307, 308):
+                        logger.warning("Image download redirected (status %d); redirects are blocked.", response.status_code)
+                        return None
+
+                    if response.status_code != 200:
+                        logger.warning("Image download failed with status HTTP %d", response.status_code)
+                        return None
+
+                    # Check Content-Length header if present
+                    content_length = response.headers.get("content-length")
+                    if content_length and content_length.isdigit() and int(content_length) > self.MAX_IMAGE_SIZE_BYTES:
+                        logger.warning("Image Content-Length (%s bytes) exceeds 5 MB limit.", content_length)
+                        return None
+
+                    buf = bytearray()
+                    async for chunk in response.aiter_bytes(chunk_size=65536):
+                        buf.extend(chunk)
+                        if len(buf) > self.MAX_IMAGE_SIZE_BYTES:
+                            logger.warning("Image download exceeded 5 MB streaming limit; stream aborted.")
+                            return None
+
+            image_bytes = bytes(buf)
+            detected_mime = self._detect_image_mime(image_bytes)
+            if not detected_mime:
+                logger.warning("Downloaded image failed magic bytes validation; format is not JPEG, PNG, or WebP.")
+                return None
+
+            return image_bytes, detected_mime
+
+        except httpx.TimeoutException:
+            logger.warning("Image download timed out after %.2fs; proceeding text-only.", timeout_seconds)
+            return None
+        except httpx.RequestError as exc:
+            logger.warning("Image download network error (%s); proceeding text-only.", type(exc).__name__)
+            return None
+        except Exception as exc:
+            logger.warning("Unexpected error during image retrieval (%s); proceeding text-only.", type(exc).__name__)
+            return None
+
+    def _build_classification_prompt(self, request: AIAnalysisRequest, has_image: bool = False) -> str:
         """Construct a structured prompt for multilingual municipal complaint classification.
 
         The citizen's description is treated as untrusted data to classify,
@@ -48,6 +228,23 @@ class AIService:
                 f"(Advisory signal only; prioritize the actual text language if it contradicts this hint)\n"
             )
 
+        image_info = ""
+        if has_image:
+            image_info = "Visual Evidence: A citizen photograph is attached to this request for corroboration.\n"
+
+        visual_instructions = ""
+        if has_image:
+            visual_instructions = """### VISUAL EVIDENCE & CORROBORATION RULES:
+- CITIZEN INTENT GROUND TRUTH: The citizen's written description is the authoritative ground truth for category and department classification.
+- SUPPORTING EVIDENCE: Use the attached image strictly as supporting visual evidence to assess physical defect severity (1-10), verify specific defect type (issue_type), and provide factual details in summary and recommended_action.
+- VISUAL CONTRADICTION RULE: If the attached photograph clearly contradicts the written report (e.g., description reports a road pothole or water leak, but the image shows an indoor living room or unrelated object):
+  * You must PRESERVE the category and department derived from the citizen's written description. Do NOT silently alter the category to match the contradictory image.
+  * You must set needs_human_review = true.
+  * You must explain the visual contradiction in review_reason (e.g., "Attached photograph contradicts written description of pothole; manual review required.").
+- UNCERTAIN OR BLURRY IMAGES: If the image is blurry, dark, low-resolution, or inconclusive, rely strictly on the written text. Do NOT guess or hallucinate defects from ambiguous visuals.
+- SAFETY CAUTION: Never infer a public safety or women's safety hazard solely from an ambiguous image unless the citizen's description explicitly describes the safety concern.
+"""
+
         return f"""You are an expert AI municipal operations assistant for an AI City Management Platform.
 Your task is to analyze a citizen's civic report and return a validated, structured JSON classification object.
 
@@ -56,7 +253,7 @@ Your task is to analyze a citizen's civic report and return a validated, structu
 2. NO HALLUCINATIONS: Do not invent streets, landmarks, measurements, or facts not present in the citizen's submission. Distinguish reported allegations from verified facts. Do not state that an issue is verified or inspected.
 3. OUTPUT FORMAT: Return ONLY a valid JSON object. No explanation, no Markdown headers, no introductory text, no conversational remarks.
 
-### MULTILINGUAL HANDLING RULES (ENGLISH, HINDI, HINGLISH):
+{visual_instructions}### MULTILINGUAL HANDLING RULES (ENGLISH, HINDI, HINGLISH):
 - ENGLISH COMPLAINTS:
   * If the complaint is written in English, identify language as "English".
   * Generate suggested_title, issue_type, summary, and recommended_action in natural English.
@@ -136,6 +333,7 @@ You must select fields strictly from these allowed values:
     - The submission is out-of-scope, non-civic (chit-chat, poems, jokes, personal matters, spam).
     - The description is too brief, ambiguous, or lacks actionable defect details.
     - Classification confidence is low or the responsible department cannot be determined with certainty.
+    - The attached photograph contradicts the written complaint description.
   * Otherwise, needs_human_review = false and review_reason = null.
   * Note: Valid civic complaints in Hindi must have needs_human_review = false.
 
@@ -145,7 +343,7 @@ You must select fields strictly from these allowed values:
     review_reason="Submission is outside municipal complaint management scope or unclassifiable."
 
 ### CITIZEN COMPLAINT INPUT:
-{coords_info}{lang_hint_info}Description: \"\"\"{request.description}\"\"\"
+{coords_info}{lang_hint_info}{image_info}Description: \"\"\"{request.description}\"\"\"
 
 JSON Response:"""
 
@@ -161,38 +359,55 @@ JSON Response:"""
             stripped = "\n".join(lines).strip()
         return stripped
 
-    async def _generate_content(self, prompt: str) -> str:
-        """Low-level helper to execute a text prompt against the Gemini REST API.
+    async def _generate_content(
+        self,
+        prompt: str,
+        timeout_seconds: Optional[float] = None,
+        image_bytes: Optional[bytes] = None,
+        mime_type: Optional[str] = None,
+    ) -> str:
+        """Execute a text or multimodal prompt against the Gemini REST API.
 
         Sends the API key via X-goog-api-key header (never in the URL or logs).
-        Enforces an 8-second timeout.
+        Enforces dynamic timeout budgeting.
+        Appends inlineData part when image_bytes and mime_type are supplied.
         Raises RuntimeError on failures without leaking sensitive credentials.
         """
         if not self.is_configured:
             logger.warning("Gemini API call skipped: GEMINI_API_KEY is not configured.")
             raise RuntimeError("Gemini API key is not configured in environment.")
 
+        effective_timeout = timeout_seconds if timeout_seconds is not None else self.TOTAL_TIMEOUT_SECONDS
+
         endpoint = f"{self.BASE_URL}/{self.model_name}:generateContent"
         headers = {
             "Content-Type": "application/json",
             "X-goog-api-key": settings.GEMINI_API_KEY.strip(),
         }
+
+        parts: list[Dict[str, Any]] = [{"text": prompt}]
+        if image_bytes and mime_type:
+            b64_data = base64.b64encode(image_bytes).decode("utf-8")
+            parts.append({
+                "inlineData": {
+                    "mimeType": mime_type,
+                    "data": b64_data,
+                }
+            })
+
         payload: Dict[str, Any] = {
             "contents": [
                 {
-                    "parts": [
-                        {"text": prompt}
-                    ]
+                    "parts": parts,
                 }
             ],
             "generationConfig": {
-                "temperature": 0.1,
                 "responseMimeType": "application/json",
             },
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.TIMEOUT_SECONDS) as client:
+            async with httpx.AsyncClient(timeout=effective_timeout) as client:
                 response = await client.post(endpoint, json=payload, headers=headers)
 
             if response.status_code != 200:
@@ -233,13 +448,13 @@ JSON Response:"""
                 raise RuntimeError("Gemini candidate missing content payload.")
 
             # 5. Parts must be a non-empty list
-            parts = content.get("parts")
-            if not isinstance(parts, list) or len(parts) == 0:
+            res_parts = content.get("parts")
+            if not isinstance(res_parts, list) or len(res_parts) == 0:
                 logger.warning("Gemini content contained no parts.")
                 raise RuntimeError("Gemini content missing parts payload.")
 
             # 6. First part must be a dictionary
-            first_part = parts[0]
+            first_part = res_parts[0]
             if not isinstance(first_part, dict):
                 logger.warning("Gemini part is not a valid dictionary.")
                 raise RuntimeError("Gemini content part structure is invalid.")
@@ -253,8 +468,8 @@ JSON Response:"""
             return text
 
         except httpx.TimeoutException as timeout_err:
-            logger.error("Gemini API request timed out after %.1f seconds.", self.TIMEOUT_SECONDS)
-            raise RuntimeError(f"Gemini API call timed out after {self.TIMEOUT_SECONDS}s.") from timeout_err
+            logger.error("Gemini API request timed out after %.1f seconds.", effective_timeout)
+            raise RuntimeError(f"Gemini API call timed out after {effective_timeout}s.") from timeout_err
 
         except httpx.NetworkError as net_err:
             logger.error("Gemini API network/connection error: %s", type(net_err).__name__)
@@ -287,11 +502,11 @@ JSON Response:"""
         )
 
     async def analyze_complaint(self, request: AIAnalysisRequest) -> AIAnalysisResponse:
-        """Analyze citizen complaint text and return structured intelligence.
+        """Analyze citizen complaint text and optional image to return structured intelligence.
 
-        Executes the Gemini classification pipeline, cleans and parses JSON,
-        validates against AIAnalysisResponse, and falls back gracefully on errors.
-        Supports English, Hindi (Devanagari), and mixed code-switched (Hinglish) text.
+        Manages a shared dynamic time budget (8.0s SLA), safely fetches and verifies images
+        from the configured Supabase host, applies visual corroboration, and degrades gracefully
+        to text-only classification on any image or multimodal failure.
         """
         if not self.is_configured:
             return self.get_fallback_response(
@@ -299,10 +514,88 @@ JSON Response:"""
                 reason="Gemini API is not configured. Manual review required.",
             )
 
-        prompt = self._build_classification_prompt(request)
+        start_time = time.monotonic()
+        deadline = start_time + self.TOTAL_TIMEOUT_SECONDS
 
+        image_bytes: Optional[bytes] = None
+        mime_type: Optional[str] = None
+
+        # Step 1: Safe Image Retrieval (if requested and sufficient budget exists)
+        if request.image_url and request.image_url.strip():
+            remaining_before_img = deadline - time.monotonic()
+            if remaining_before_img >= 4.5:
+                download_timeout = min(2.0, remaining_before_img - 3.5)
+                resolved = self._resolve_image_target(request.image_url)
+                if resolved:
+                    target_url, headers = resolved
+                    img_result = await self._download_and_verify_image(
+                        target_url=target_url,
+                        headers=headers,
+                        timeout_seconds=download_timeout,
+                    )
+                    if img_result:
+                        image_bytes, mime_type = img_result
+            else:
+                logger.warning("Skipping image download due to tight time budget (%.2fs remaining).", remaining_before_img)
+
+        # Step 2: Gemini Classification (Multimodal if image acquired, otherwise text-only)
+        has_image = bool(image_bytes and mime_type)
+        prompt = self._build_classification_prompt(request, has_image=has_image)
+
+        time_for_gemini = deadline - time.monotonic()
+        if time_for_gemini < 2.0:
+            return self.get_fallback_response(
+                request,
+                reason="Time budget expired before AI inference could complete.",
+            )
+
+        raw_text: Optional[str] = None
         try:
-            raw_text = await self._generate_content(prompt)
+            raw_text = await self._generate_content(
+                prompt=prompt,
+                timeout_seconds=time_for_gemini,
+                image_bytes=image_bytes,
+                mime_type=mime_type,
+            )
+        except Exception as primary_exc:
+            logger.warning("Primary Gemini call failed: %s (%s)", type(primary_exc).__name__, primary_exc)
+            # If multimodal call failed, retry with text-only if sufficient time remains
+            if has_image:
+                remaining_for_retry = deadline - time.monotonic()
+                if remaining_for_retry >= self.MIN_RETRY_REMAINING_SECONDS:
+                    logger.info("Retrying with text-only classification (%.2fs remaining).", remaining_for_retry)
+                    try:
+                        text_only_prompt = self._build_classification_prompt(request, has_image=False)
+                        raw_text = await self._generate_content(
+                            prompt=text_only_prompt,
+                            timeout_seconds=remaining_for_retry,
+                        )
+                    except Exception as retry_exc:
+                        logger.error("Text-only retry also failed: %s", type(retry_exc).__name__)
+                        return self.get_fallback_response(
+                            request,
+                            reason=f"AI classification failed after retry: {type(retry_exc).__name__}",
+                        )
+                else:
+                    logger.warning("Insufficient time (%.2fs) for text-only retry.", remaining_for_retry)
+                    return self.get_fallback_response(
+                        request,
+                        reason="AI processing time budget exhausted.",
+                    )
+            else:
+                return self.get_fallback_response(
+                    request,
+                    reason=f"Classification processing failure: {type(primary_exc).__name__}",
+                )
+
+        if not raw_text:
+            return self.get_fallback_response(
+                request,
+                reason="No response received from AI model.",
+            )
+
+        # Step 3: Parse and Validate Output
+        try:
             cleaned_text = self._clean_json_text(raw_text)
             parsed_data = json.loads(cleaned_text)
 
@@ -313,9 +606,8 @@ JSON Response:"""
                     reason="Model output did not conform to dictionary schema.",
                 )
 
-            # Validate against Pydantic schema
+            # Validate against Pydantic schema (preserves needs_human_review=True whenever set by model)
             response = AIAnalysisResponse.model_validate(parsed_data)
-
             return response
 
         except json.JSONDecodeError as json_err:
@@ -324,11 +616,11 @@ JSON Response:"""
                 request,
                 reason="Failed to parse model output as valid JSON.",
             )
-        except Exception as exc:
-            logger.error("AI classification encountered an error: %s", type(exc).__name__)
+        except Exception as val_exc:
+            logger.error("Pydantic schema validation failed: %s", type(val_exc).__name__)
             return self.get_fallback_response(
                 request,
-                reason=f"Classification processing failure: {type(exc).__name__}",
+                reason=f"Schema validation failed: {type(val_exc).__name__}",
             )
 
 
