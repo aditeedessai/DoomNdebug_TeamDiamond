@@ -1,7 +1,7 @@
 """API route definitions and modular router aggregation."""
 from fastapi import APIRouter
 
-from app.api.routes import auth, complaints, dashboard, feedback, map, projects, safety
+from app.api.routes import assignments, auth, complaints, dashboard, feedback, map, projects, safety, workers
 
 api_router = APIRouter()
 
@@ -34,3 +34,9 @@ api_router.include_router(safety.router, prefix="/safety-reports", tags=["safety
 
 # Dashboard routes
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
+
+# Worker routes
+api_router.include_router(workers.router, prefix="/workers", tags=["workers"])
+
+# Assignment routes
+api_router.include_router(assignments.router, prefix="/assignments", tags=["assignments"])
