@@ -10,6 +10,7 @@ import {
   Activity, ShieldCheck, Navigation
 } from "lucide-react";
 import "./CitizenPages.css";
+import CivicMap2D from "../../../components/CivicMap2D";
 
 const initialComplaints = [
   { id: "SL-2026-001", title: "Garbage accumulation", category: "Waste Management", location: "Margao, Goa", status: "In Progress", date: "12 Nov 2026" },
@@ -220,18 +221,8 @@ export function CityMap() {
       <PageHeading eyebrow="EXPLORE YOUR CITY" title="Goa, on the map." description="Find civic services, public facilities and important places around your community." />
       <Panel className="cp-map-panel">
         <div className="cp-map-search"><Search /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search an area or civic facility..." /></div>
-        <div className="cp-map-visual">
-          <div className="cp-map-grid" />
-          <div className="cp-map-water" />
-          <span className="cp-map-label label-one">PANAJI</span>
-          <span className="cp-map-label label-two">VASCO</span>
-          <span className="cp-map-label label-three">MARGAO</span>
-          <span className="cp-map-pin pin-one"><MapPin /></span>
-          <span className="cp-map-pin pin-two"><MapPin /></span>
-          <span className="cp-map-pin pin-three"><MapPin /></span>
-          <div className="cp-map-placeholder"><Navigation size={20} /><strong>Goa civic map</strong><span>Map provider integration can be connected here.</span></div>
-        </div>
-        <p className="cp-muted">This is a visual map placeholder. Live map tiles and location services need map/API configuration.</p>
+        <CivicMap2D />
+        
       </Panel>
     </>
   );
