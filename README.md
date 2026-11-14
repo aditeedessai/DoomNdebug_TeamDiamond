@@ -1,20 +1,63 @@
-# DoomNdebug Team Diamond
+# 🏙️ AI City Management Platform
 
-## AI City Management Platform
+### Intelligent Municipal Complaint Management, Public Infrastructure Monitoring & Smart City Operations
 
-### Project Overview
-The AI City Management Platform is a unified municipal operations system designed to connect citizens with local government departments. Citizens can submit civic complaints (via text, photos, or voice), monitor complaint resolution progress, explore urban infrastructure projects, share feedback, and highlight infrastructure safety concerns. Municipal officials access a dedicated operational portal to review and triage issues, track departmental workloads, assign field personnel, monitor traffic hotspots, and analyze infrastructure safety gaps—all powered by a single shared municipal data platform and intelligent AI processing pipeline.
+An AI-powered municipal management platform designed to connect citizens, government officials, and field workers through a unified digital system. The platform streamlines civic complaint reporting, automates complaint analysis and prioritization, improves municipal task allocation, and provides real-time visibility into city infrastructure and public services.
 
-### Main Objective
-To bridge the gap between citizens and municipal administration through an AI-powered city management platform that simplifies civic issue reporting, automates complaint classification and department routing, enables transparent end-to-end tracking, and delivers actionable geospatial intelligence for municipal governance and infrastructure planning.
+**Project:** AI City Management Platform  
+**Team:** DoomNdebug – Team Diamond  
+**Category:** Artificial Intelligence / Smart City / Civic Technology
 
-### Technology Stack
-- **Frontend:** React, Vite
-- **Backend:** FastAPI
-- **Database:** Supabase
-- **AI / LLM:** Gemini AI
-- **Mapping & Geospatial:** Leaflet
+---
 
-### Documentation
-For full architectural specifications, system workflows, database schemas, and implementation details, refer to the detailed Product Requirements Document in [`docs/PRD.md`](docs/PRD.md).
+## 📌 Table of Contents
 
+1. [Overview](#-overview)
+2. [Problem Statement](#-problem-statement)
+3. [Our Solution](#-our-solution)
+4. [Key Features](#-key-features)
+5. [User Roles](#-user-roles)
+6. [AI Integration](#-ai-integration)
+7. [Technology Stack](#-technology-stack)
+8. [System Architecture](#-system-architecture)
+9. [Project Structure](#-project-structure)
+10. [Database Design](#-database-design)
+11. [API Overview](#-api-overview)
+12. [Installation and Setup](#-installation-and-setup)
+13. [Environment Configuration](#-environment-configuration)
+14. [Running the Application](#-running-the-application)
+15. [Security and Privacy](#-security-and-privacy)
+16. [Testing](#-testing)
+17. [Demo Workflow](#-demo-workflow)
+18. [Future Scope](#-future-scope)
+19. [Team Responsibilities](#-team-responsibilities)
+
+---
+
+## 🌆 Overview
+
+Traditional municipal complaint management systems often rely on disconnected processes, manual complaint classification, delayed task allocation, and limited communication between citizens and municipal departments.
+
+The AI City Management Platform addresses these challenges through a centralized, intelligent system that brings together:
+
+- Citizen complaint reporting and tracking.
+- AI-assisted complaint classification and prioritization.
+- Duplicate complaint identification.
+- Department and field-worker assignment.
+- Public infrastructure project monitoring.
+- Safety hazard reporting.
+- Interactive city maps and traffic hotspot visualization.
+- Role-based dashboards and analytics.
+
+The platform aims to make municipal operations more transparent, organized, data-driven, and responsive to citizens' needs.
+
+## ❗ Problem Statement
+
+Municipal administrations face several operational challenges:
+
+- Citizens lack a centralized and transparent way to report civic issues.
+- Complaints are frequently categorized and routed manually.
+- Duplicate complaints increase administrative workload.
+- High-priority infrastructure and safety issues may not receive timely attention.
+- Officials have limited visibility into department-level complaint performance.
+- Field-worker allocation and task tracking
