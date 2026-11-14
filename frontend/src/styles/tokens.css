@@ -1,0 +1,90 @@
+@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;500;600&family=Urbanist:wght@300;400;500;600;700&display=swap");
+
+:root {
+  /* Canvas */
+  --bg-canvas: #F4F2EC;
+  --bg-gradient:
+    radial-gradient(1200px 700px at 85% 0%, #FBF3CF 0%, transparent 60%),
+    radial-gradient(900px 600px at 0% 100%, #E9E6F7 0%, transparent 60%),
+    #F4F2EC;
+  --surface: #FFFFFF;
+  --surface-glass: rgba(255, 255, 255, 0.62);
+  --surface-glass-strong: rgba(255, 255, 255, 0.82);
+  --surface-muted: #F0EEE8;
+  --surface-dark: #121212;
+
+  /* Ink */
+  --ink-900: #121212;
+  --ink-700: #3A3A3A;
+  --ink-500: #7A7A7A;
+  --ink-300: #BDBDBD;
+  --ink-100: #E7E5DF;
+  --on-dark: #FFFFFF;
+
+  /* Signature accent */
+  --accent: #D7FF1E;
+  --accent-ink: #121212;
+  --accent-soft: #F0FFB0;
+
+  /* Info / map route */
+  --blue: #2B2BF0;
+  --blue-soft: #E6E7FF;
+
+  /* Warm */
+  --amber: #F5B800;
+  --orange: #F26B1D;
+  --orange-soft: #FFE6D4;
+
+  /* Semantic */
+  --danger: #E5484D;
+  --danger-soft: #FFE3E4;
+  --success: #2FBF71;
+  --success-soft: #DDF6E8;
+
+  /* Radius */
+  --r-xs: 8px;
+  --r-sm: 12px;
+  --r-md: 18px;
+  --r-lg: 28px;
+  --r-xl: 36px;
+  --r-pill: 999px;
+
+  /* Shadow */
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.8) inset,
+    0 12px 32px rgba(40, 40, 20, 0.06);
+  --shadow-float: 0 18px 48px rgba(20, 20, 40, 0.14);
+
+  /* Spacing */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+
+  /* Glass */
+  --blur: saturate(140%) blur(18px);
+
+  /* Typography */
+  --font-sans: "Urbanist", "Outfit", "Inter", system-ui, sans-serif;
+  --font-devanagari: "Noto Sans Devanagari", var(--font-sans);
+  --text-display: 300 56px/60px var(--font-sans);
+  --text-h1: 600 32px/38px var(--font-sans);
+  --text-h2: 600 22px/28px var(--font-sans);
+  --text-metric: 300 40px/44px var(--font-sans);
+  --text-body: 400 15px/22px var(--font-sans);
+  --text-label: 500 13px/18px var(--font-sans);
+  --text-micro: 500 11px/14px var(--font-sans);
+
+  /* Layout */
+  --content-max: 1440px;
+  --rail-width: 72px;
+  --page-gutter: 24px;
+}
+
+@media (max-width: 639px) {
+  :root {
+    --page-gutter: 16px;
+  }
+}
