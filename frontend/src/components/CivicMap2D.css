@@ -1,0 +1,793 @@
+.civic-map-wrapper {
+    width: 100%;
+    min-height: 100vh;
+    padding: 24px;
+    background: #101820;
+    color: #f4f5f6;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    font-family: Inter, Arial, sans-serif;
+}
+
+.civic-map-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 20px;
+}
+
+.civic-map-eyebrow {
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: #75b9aa;
+    font-weight: 700;
+}
+
+.civic-map-header h2 {
+    font-size: 26px;
+    margin: 7px 0;
+}
+
+.civic-map-header p {
+    color: #9aa8b2;
+    font-size: 13px;
+}
+
+.map-theme-switch {
+    display: flex;
+    padding: 4px;
+    gap: 4px;
+    background: #202d37;
+    border-radius: 10px;
+}
+
+.map-theme-switch button {
+    border: none;
+    padding: 10px 16px;
+    border-radius: 7px;
+    cursor: pointer;
+    background: transparent;
+    color: #bdc8ce;
+    font-size: 13px;
+}
+
+.map-theme-switch button.active {
+    background: #477f78;
+    color: white;
+}
+
+.civic-map-container {
+    position: relative;
+    width: 100%;
+    height: 72vh;
+    min-height: 450px;
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1px solid #34434c;
+}
+
+.civic-map-canvas {
+    width: 100%;
+    height: 100%;
+}
+
+.map-loading {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    background: #17232d;
+    color: white;
+    pointer-events: none;
+}
+
+.civic-map-footer {
+    display: flex;
+    justify-content: space-between;
+    color: #82939e;
+    font-size: 10px;
+    letter-spacing: 1px;
+}
+
+@media (max-width: 600px) {
+    .civic-map-header {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .civic-map-container {
+        height: 65vh;
+        min-height: 380px;
+    }
+}
+
+.complaint-details-panel {
+    background: #202d37;
+    border: 1px solid #3b505e;
+    border-radius: 12px;
+    padding: 20px;
+    color: #f4f7fa;
+    animation: complaintPanelIn 0.2s ease-out;
+}
+
+.complaint-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+}
+
+.complaint-panel-header h3 {
+    font-size: 20px;
+    margin-top: 7px;
+}
+
+.complaint-close-button {
+    background: #344550;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    width: 34px;
+    height: 34px;
+    cursor: pointer;
+    font-size: 16px;
+}
+
+.complaint-details-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+}
+
+.complaint-detail-item {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+.complaint-detail-item span {
+    color: #94a8b5;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.complaint-detail-item strong {
+    font-size: 14px;
+}
+
+.severity-high {
+    color: #ff6875;
+}
+
+.severity-medium {
+    color: #ffbd63;
+}
+
+.severity-low {
+    color: #65d69c;
+}
+
+@keyframes complaintPanelIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (max-width: 650px) {
+    .complaint-details-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+/* Complaint Priority Badges */
+
+.priority-badge {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 12px !important;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+}
+
+.priority-critical {
+    background: rgba(201, 47, 69, 0.18);
+    color: #ff5964;
+    border: 1px solid rgba(201, 47, 69, 0.4);
+}
+
+.priority-high {
+    background: rgba(255, 89, 100, 0.15);
+    color: #ff7882;
+    border: 1px solid rgba(255, 89, 100, 0.35);
+}
+
+.priority-medium {
+    background: rgba(255, 180, 84, 0.15);
+    color: #ffbd63;
+    border: 1px solid rgba(255, 180, 84, 0.35);
+}
+
+.priority-low {
+    background: rgba(85, 201, 138, 0.15);
+    color: #65d69c;
+    border: 1px solid rgba(85, 201, 138, 0.35);
+}
+
+/* Complaint Status Badges */
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 12px !important;
+    font-weight: 700;
+    border: 1px solid transparent;
+}
+
+.status-submitted {
+    background: rgba(100, 160, 255, 0.15);
+    color: #83b5ff;
+    border-color: rgba(100, 160, 255, 0.35);
+}
+
+.status-under-review {
+    background: rgba(255, 180, 84, 0.15);
+    color: #ffbd63;
+    border-color: rgba(255, 180, 84, 0.35);
+}
+
+.status-assigned {
+    background: rgba(160, 130, 255, 0.15);
+    color: #b9a5ff;
+    border-color: rgba(160, 130, 255, 0.35);
+}
+
+.status-in-progress {
+    background: rgba(54, 197, 180, 0.15);
+    color: #64d6c8;
+    border-color: rgba(54, 197, 180, 0.35);
+}
+
+.status-resolved {
+    background: rgba(85, 201, 138, 0.15);
+    color: #65d69c;
+    border-color: rgba(85, 201, 138, 0.35);
+}
+
+.status-rejected {
+    background: rgba(201, 47, 69, 0.15);
+    color: #ff7882;
+    border-color: rgba(201, 47, 69, 0.35);
+}
+
+/* Full-width Complaint Description */
+
+.complaint-description {
+    margin-top: 22px;
+    padding: 16px 18px;
+    background: rgba(255, 255, 255, 0.035);
+    border: 1px solid #3b505e;
+    border-radius: 10px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.complaint-description span {
+    display: block;
+    color: #94a8b5;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 9px;
+}
+
+.complaint-description p {
+    color: #f4f7fa;
+    font-size: 14px;
+    line-height: 1.6;
+    margin: 0;
+}
+
+/* Minimal Map Complaint Popup */
+
+.civic-complaint-popup .maplibregl-popup-content {
+    background: #202d37;
+    color: #f4f7fa;
+    border: 1px solid #3b505e;
+    border-radius: 10px;
+    padding: 14px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    min-width: 190px;
+}
+
+.civic-complaint-popup .maplibregl-popup-tip {
+    border-top-color: #202d37;
+    border-bottom-color: #202d37;
+}
+
+.complaint-popup {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+}
+
+.popup-header,
+.popup-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.popup-header strong {
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    color: #94a8b5;
+}
+
+.complaint-popup h4 {
+    font-size: 14px;
+    line-height: 1.4;
+    margin: 0;
+    color: #f4f7fa;
+}
+
+.popup-footer .status-badge,
+.popup-header .priority-badge {
+    font-size: 10px !important;
+    padding: 3px 8px;
+}
+
+.civic-complaint-popup .maplibregl-popup-close-button {
+    color: #f4f7fa;
+    font-size: 17px;
+    padding: 3px 7px;
+}
+
+.civic-complaint-popup .maplibregl-popup-close-button:hover {
+    background: #344550;
+    border-radius: 5px;
+}
+
+/* ================================
+   CIVICSYNC THEME SYSTEM
+================================ */
+
+/* DARK THEME — Blackish olive green */
+.civic-map-wrapper.dark-theme {
+    --bg-main: #151812;
+    --bg-secondary: #20251B;
+    --bg-card: #303727;
+    --accent: #C4E86B;
+    --text-main: #F0F1E9;
+    --text-muted: #A5AA95;
+    --border-color: #424A35;
+}
+
+/* LIGHT THEME — Warm ivory */
+.civic-map-wrapper.light-theme {
+    --bg-main: #F5F5EC;
+    --bg-secondary: #FFFFFF;
+    --bg-card: #FFFFFF;
+    --accent: #547C45;
+    --text-main: #25291F;
+    --text-muted: #737969;
+    --border-color: #DDE2D2;
+}
+
+/* Main wrapper */
+.civic-map-wrapper {
+    background: var(--bg-main);
+    color: var(--text-main);
+    transition: background 0.3s ease, color 0.3s ease;
+}
+
+/* Header */
+.civic-map-header h1,
+.civic-map-header h2 {
+    color: var(--text-main);
+}
+
+.civic-map-eyebrow {
+    color: var(--accent);
+}
+
+.civic-map-header p {
+    color: var(--text-muted);
+}
+
+/* Theme switch */
+.theme-switch {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+}
+
+.theme-switch button {
+    color: var(--text-muted);
+}
+
+.theme-switch button.active {
+    background: var(--accent);
+    color: #20251B;
+}
+
+/* Map border */
+.civic-map-container {
+    border-color: var(--border-color);
+}
+
+/* Complaint details panel */
+.complaint-details {
+    background: var(--bg-card);
+    color: var(--text-main);
+    border-color: var(--border-color);
+}
+
+.complaint-details h2,
+.complaint-details h3,
+.complaint-details strong {
+    color: var(--text-main);
+}
+
+.complaint-details p,
+.complaint-details span {
+    color: var(--text-muted);
+}
+
+/* Description section */
+.complaint-description {
+    background: var(--bg-secondary);
+    border-color: var(--border-color);
+    color: var(--text-main);
+}
+
+/* Hover popup */
+.civic-complaint-popup .maplibregl-popup-content {
+    background: var(--bg-card);
+    color: var(--text-main);
+    border: 1px solid var(--border-color);
+}
+
+.civic-complaint-popup .popup-label {
+    color: var(--text-muted);
+}
+
+/* Footer */
+.civic-map-footer {
+    color: var(--text-muted);
+}
+
+.google-maps-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    padding: 13px 18px;
+    margin-top: 16px;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #20251B;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 14px;
+    transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.google-maps-button:hover {
+    transform: translateY(-2px);
+    opacity: 0.9;
+}
+
+/* ===== COMPLAINT DETAILS LAYOUT FIX ===== */
+
+/* Description should occupy the full grid width */
+.complaint-description {
+    grid-column: 1 / -1;
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--bg-secondary, #20251B) !important;
+    border: 1px solid var(--border-color, #424A35);
+    border-radius: 12px;
+    padding: 18px 20px;
+}
+
+.complaint-description span {
+    display: block;
+    color: var(--accent, #C4E86B) !important;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    margin-bottom: 10px;
+}
+
+.complaint-description p {
+    color: var(--text-main, #F0F1E9) !important;
+    font-size: 14px;
+    line-height: 1.7;
+    margin: 0;
+}
+
+/* Google Maps button */
+.google-maps-button {
+    grid-column: 1 / -1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: fit-content;
+    min-width: 230px;
+    padding: 13px 20px;
+    margin-top: 0;
+    border-radius: 9px;
+    background: var(--accent, #C4E86B);
+    color: #20251B !important;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 700;
+    transition: all 0.2s ease;
+    box-sizing: border-box;
+}
+
+.google-maps-button:hover {
+    transform: translateY(-2px);
+    filter: brightness(1.08);
+    opacity: 1;
+}
+
+/* =====================================
+   CIVICSYNC — COMPLAINT PANEL REDESIGN
+===================================== */
+
+/* Main complaint panel */
+.complaint-details-panel {
+    background: var(--bg-secondary, #20251B) !important;
+    color: var(--text-main, #F0F1E9);
+    border: 1px solid var(--border-color, #424A35);
+    border-radius: 18px;
+    padding: 26px;
+    margin-bottom: 20px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.10);
+    transition: all 0.3s ease;
+}
+
+/* Header */
+.complaint-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--border-color, #424A35);
+}
+
+.complaint-panel-header h3 {
+    font-size: 23px;
+    font-weight: 750;
+    margin: 8px 0 0;
+    color: var(--text-main, #F0F1E9);
+    letter-spacing: -0.5px;
+}
+
+/* Close button */
+.complaint-close-button {
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    border: 1px solid var(--border-color, #424A35);
+    background: var(--bg-card, #303727);
+    color: var(--text-main, #F0F1E9);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.complaint-close-button:hover {
+    background: var(--accent, #C4E86B);
+    color: #20251B;
+}
+
+/* Information grid */
+.complaint-details-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+}
+
+/* Individual information cards */
+.complaint-detail-item {
+    background: var(--bg-card, #303727);
+    border: 1px solid var(--border-color, #424A35);
+    border-radius: 11px;
+    padding: 14px 15px;
+    min-width: 0;
+}
+
+.complaint-detail-item span {
+    display: block;
+    color: var(--text-muted, #A5AA95);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+
+.complaint-detail-item strong {
+    display: block;
+    color: var(--text-main, #F0F1E9);
+    font-size: 13px;
+    font-weight: 650;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+/* Description */
+.complaint-description {
+    grid-column: 1 / -1;
+    background: var(--bg-card, #303727) !important;
+    border: 1px solid var(--border-color, #424A35);
+    border-radius: 12px;
+    padding: 18px 20px;
+}
+
+.complaint-description span {
+    color: var(--accent, #C4E86B) !important;
+    font-size: 11px;
+    font-weight: 750;
+    letter-spacing: 1px;
+}
+
+.complaint-description p {
+    color: var(--text-main, #F0F1E9) !important;
+    font-size: 14px;
+    line-height: 1.7;
+    margin: 10px 0 0;
+}
+
+/* Google Maps action */
+.google-maps-button {
+    grid-column: 1 / -1;
+    width: fit-content;
+    min-width: 245px;
+    padding: 13px 20px;
+    margin-top: 2px;
+    border-radius: 10px;
+    background: var(--accent, #C4E86B) !important;
+    color: #20251B !important;
+    font-size: 13px;
+    font-weight: 750;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    transition: all 0.2s ease;
+}
+
+.google-maps-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(196, 232, 107, 0.2);
+    filter: brightness(1.05);
+}
+
+/* Responsive layout */
+@media (max-width: 1000px) {
+    .complaint-details-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 550px) {
+    .complaint-details-panel {
+        padding: 17px;
+    }
+
+    .complaint-details-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .google-maps-button {
+        width: 100%;
+        min-width: 0;
+    }
+}
+
+/* ===== MAP HOVER POPUP REDESIGN ===== */
+
+.civic-complaint-popup .maplibregl-popup-content {
+    background: #252B20 !important;
+    color: #F0F1E9 !important;
+    border: 1px solid #454E39 !important;
+    border-radius: 13px !important;
+    padding: 16px 18px !important;
+    min-width: 210px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25) !important;
+    font-family: inherit;
+}
+
+.civic-complaint-popup .maplibregl-popup-tip {
+    border-top-color: #252B20 !important;
+    border-bottom-color: #252B20 !important;
+}
+
+.civic-complaint-popup {
+    z-index: 10;
+}
+
+/* Popup text */
+.civic-complaint-popup * {
+    color: #F0F1E9;
+}
+
+.civic-complaint-popup .popup-label {
+    color: #A5AA95 !important;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.7px;
+}
+
+.civic-complaint-popup h4,
+.civic-complaint-popup strong {
+    color: #F0F1E9 !important;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.civic-complaint-popup p {
+    color: #D1D5C8 !important;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+/* Light theme */
+.light-theme .civic-complaint-popup .maplibregl-popup-content {
+    background: #FFFFFF !important;
+    color: #25291F !important;
+    border: 1px solid #DDE2D2 !important;
+}
+
+.light-theme .civic-complaint-popup .maplibregl-popup-tip {
+    border-top-color: #FFFFFF !important;
+    border-bottom-color: #FFFFFF !important;
+}
+
+.light-theme .civic-complaint-popup * {
+    color: #25291F;
+}
+
+.light-theme .civic-complaint-popup .popup-label {
+    color: #737969 !important;
+}
+
+.light-theme .civic-complaint-popup h4,
+.light-theme .civic-complaint-popup strong {
+    color: #25291F !important;
+}
+
+.light-theme .civic-complaint-popup p {
+    color: #555D4D !important;
+}
+
+/* Light theme — white button text */
+.light-theme .google-maps-button {
+    color: #FFFFFF !important;
+}
+
+/* Dark theme — black button text */
+.dark-theme .google-maps-button {
+    color: #20251B !important;
+}
