@@ -57,6 +57,62 @@
     color: white;
 }
 
+.map-layer-toggles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.map-layer-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 14px;
+    border: 1px solid #34434c;
+    border-radius: 20px;
+    background: #1a252f;
+    color: #9aa8b2;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.map-layer-btn:hover {
+    border-color: #55c98a;
+    color: #f4f5f6;
+}
+
+.map-layer-btn.active {
+    background: #203534;
+    border-color: #36c5b4;
+    color: #36c5b4;
+}
+
+.layer-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.complaint-dot {
+    background: #ff5964;
+}
+
+.project-dot {
+    background: #00bcb4;
+}
+
+.hotspot-dot {
+    background: #f59e0b;
+}
+
+.safety-dot {
+    background: #a855f7;
+}
+
 .civic-map-container {
     position: relative;
     width: 100%;

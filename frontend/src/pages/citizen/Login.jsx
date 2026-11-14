@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
@@ -6,6 +5,7 @@ import {
   ShieldCheck, MapPin, Activity, Eye, EyeOff,
   Mail, Lock, Sun, Moon
 } from "lucide-react";
+import { useAuth } from "../../context/AuthContext";
 import "./Login.css";
 
 function PortalCard({ type, flipped, onFlip, onEnter }) {
@@ -93,29 +93,90 @@ function PortalCard({ type, flipped, onFlip, onEnter }) {
 export default function Login() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { login, logout, user, isAuthenticated } = useAuth();
 
   const isCitizenLogin = location.pathname === "/citizen-login";
   const isOfficialLogin = location.pathname === "/official-login";
   const isLoginForm = isCitizenLogin || isOfficialLogin;
 
   const [theme, setTheme] = useState(() => {
-  return localStorage.getItem("smartland-theme") || "dark";
-});
-useEffect(() => {
-  localStorage.setItem("smartland-theme", theme);
-}, [theme]);
+    return localStorage.getItem("smartland-theme") || "dark";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("smartland-theme", theme);
+  }, [theme]);
+
+  // If already authenticated and visiting login, redirect to active portal
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      if (user.role === "citizen") {
+        navigate("/citizen/dashboard", { replace: true });
+      } else if (user.role === "official" || user.role === "worker") {
+        navigate("/official/dashboard", { replace: true });
+      }
+    }
+  }, [isAuthenticated, user, navigate]);
+
   const [citizenFlipped, setCitizenFlipped] = useState(false);
   const [officialFlipped, setOfficialFlipped] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
+  const [isError, setIsError] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const portalName = isCitizenLogin ? "Citizen" : "Official";
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    setMessage("Login form ready. Authentication API connection is still required.");
+    if (!email.trim() || !password) {
+      setMessage("Please enter both email address and password.");
+      setIsError(true);
+      return;
+    }
+
+    setIsSubmitting(true);
+    setMessage("");
+    setIsError(false);
+
+    try {
+      const data = await login(email.trim(), password);
+      const userProfile = data.profile || user;
+
+      if (!userProfile) {
+        throw new Error("Unable to retrieve user profile after login.");
+      }
+
+      // Role discrimination: citizen portal requires citizen role
+      if (isCitizenLogin && userProfile.role !== "citizen") {
+        logout();
+        setMessage("This account is registered as an Official / Worker. Please use the Official Portal.");
+        setIsError(true);
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Role discrimination: official portal requires official or worker role
+      if (isOfficialLogin && userProfile.role === "citizen") {
+        logout();
+        setMessage("This account is registered as a Citizen. Please use the Citizen Portal.");
+        setIsError(true);
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Navigate to destination from state or default dashboard
+      const destination = location.state?.from?.pathname || (userProfile.role === "citizen" ? "/citizen/dashboard" : "/official/dashboard");
+      navigate(destination, { replace: true });
+    } catch (err) {
+      const errorMsg = err.userMessage || "Authentication failed. Please verify your email and password.";
+      setMessage(errorMsg);
+      setIsError(true);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (isLoginForm) {
@@ -162,22 +223,42 @@ useEffect(() => {
               <label htmlFor="portal-email">Email address</label>
               <div className="auth-input">
                 <Mail size={17} />
-                <input id="portal-email" type="email" placeholder="Enter your email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                <input
+                  id="portal-email"
+                  type="email"
+                  placeholder="Enter your email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={isSubmitting}
+                  required
+                />
               </div>
 
               <label htmlFor="portal-password">Password</label>
               <div className="auth-input">
                 <Lock size={17} />
-                <input id="portal-password" type={showPassword ? "text" : "password"} placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+                <input
+                  id="portal-password"
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  disabled={isSubmitting}
+                  required
+                />
                 <button type="button" className="auth-eye" onClick={() => setShowPassword(!showPassword)}>
                   {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                 </button>
               </div>
 
-              <button type="submit" className="auth-submit">
-                Sign in to {portalName} Portal <ArrowUpRight size={18} />
+              <button type="submit" className="auth-submit" disabled={isSubmitting}>
+                {isSubmitting ? "Authenticating..." : `Sign in to ${portalName} Portal`} <ArrowUpRight size={18} />
               </button>
-              {message && <p className="auth-message">{message}</p>}
+              {message && (
+                <p className="auth-message" style={{ color: isError ? "#f87171" : "var(--sl-teal)" }}>
+                  {message}
+                </p>
+              )}
             </form>
 
             {isCitizenLogin && (

@@ -5,8 +5,9 @@ import {
   Activity, Bell, Building2, ChevronDown, CircleHelp,
   ClipboardList, FileText, LayoutDashboard, Map,
   MapPinned, Menu, Search, Settings, ShieldAlert,
-  ShieldCheck, Sparkles, Users, X, Mic
+  ShieldCheck, Sparkles, Users, X, Mic, LogOut
 } from "lucide-react";
+import { useAuth } from "../../context/AuthContext";
 import "./AppLayout.css";
 
 const citizenNav = [
@@ -29,10 +30,11 @@ const officialNav = [
 export default function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { user, logout } = useAuth();
 
   const isOfficial = location.pathname.startsWith("/official");
   const navItems = isOfficial ? officialNav : citizenNav;
-  const role = isOfficial ? "Government Official" : "Citizen";
+  const role = user?.role ? (user.role.charAt(0).toUpperCase() + user.role.slice(1)) : (isOfficial ? "Government Official" : "Citizen");
 
   const [theme, setTheme] = useState(
     () => localStorage.getItem("smartland-theme") || "light"
@@ -81,10 +83,12 @@ export default function AppLayout() {
             className="shell-profile"
             onClick={() => navigate(isOfficial ? "/official/settings" : "/citizen/settings")}
           >
-            <span className="shell-avatar">{isOfficial ? "O" : "C"}</span>
+            <span className="shell-avatar">
+              {(user?.full_name ? user.full_name[0] : (isOfficial ? "O" : "C")).toUpperCase()}
+            </span>
             <span className="shell-profile-copy">
-              <strong>{isOfficial ? "Official account" : "Citizen account"}</strong>
-              <small>{role}</small>
+              <strong>{user?.full_name || (isOfficial ? "Official account" : "Citizen account")}</strong>
+              <small>{user?.role ? user.role.toUpperCase() : role}</small>
             </span>
             <ChevronDown size={14} />
           </button>
@@ -142,9 +146,15 @@ export default function AppLayout() {
               <span>Settings</span>
             </NavLink>
 
-            <button className="shell-nav-link shell-logout" onClick={() => navigate("/login")}>
-              <CircleHelp size={17} />
-              <span>Help & sign out</span>
+            <button
+              className="shell-nav-link shell-logout"
+              onClick={() => {
+                logout();
+                navigate("/login");
+              }}
+            >
+              <LogOut size={17} />
+              <span>Sign out</span>
             </button>
           </div>
         </aside>

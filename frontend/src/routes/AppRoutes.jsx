@@ -1,10 +1,10 @@
-
 import { Routes, Route, Navigate } from "react-router-dom";
 
 import Home from "../pages/citizen/home/home";
 import Login from "../pages/citizen/Login";
 
 import AppLayout from "../components/common/AppLayout";
+import ProtectedRoute from "../components/common/ProtectedRoute";
 
 import {
   Register,
@@ -26,7 +26,8 @@ import {
   OfficialAnalytics,
   OfficialAlerts,
   OfficialSettings,
-  OfficialProjectsFeedback
+  OfficialProjectsFeedback,
+  OfficialSafetyRegister
 } from "../pages/official/OfficialPages";
 
 export default function AppRoutes() {
@@ -43,8 +44,15 @@ export default function AppRoutes() {
       {/* CITIZEN REGISTRATION */}
       <Route path="/register" element={<Register />} />
 
-      {/* CITIZEN PORTAL */}
-      <Route path="/citizen" element={<AppLayout />}>
+      {/* PROTECTED CITIZEN PORTAL (Requires role='citizen') */}
+      <Route
+        path="/citizen"
+        element={
+          <ProtectedRoute allowedRoles={["citizen"]}>
+            <AppLayout />
+          </ProtectedRoute>
+        }
+      >
         <Route index element={<Navigate to="dashboard" replace />} />
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="report" element={<Report />} />
@@ -55,16 +63,73 @@ export default function AppRoutes() {
         <Route path="settings" element={<SettingsPage />} />
       </Route>
 
-      {/* OFFICIAL PORTAL */}
-      <Route path="/official" element={<OfficialLayout />}>
+      {/* PROTECTED OFFICIAL & WORKER PORTAL */}
+      <Route
+        path="/official"
+        element={
+          <ProtectedRoute allowedRoles={["official", "worker"]}>
+            <OfficialLayout />
+          </ProtectedRoute>
+        }
+      >
         <Route index element={<Navigate to="dashboard" replace />} />
         <Route path="dashboard" element={<OfficialDashboard />} />
-        <Route path="complaints" element={<OfficialComplaints />} />
-        <Route path="departments" element={<OfficialDepartments />} />
-        <Route path="officials" element={<OfficialDirectory />} />
-        <Route path="projects" element={<OfficialProjectsFeedback />} />
-        <Route path="analytics" element={<OfficialAnalytics />} />
-        <Route path="alerts" element={<OfficialAlerts />} />
+        <Route
+          path="complaints"
+          element={
+            <ProtectedRoute allowedRoles={["official"]}>
+              <OfficialComplaints />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="departments"
+          element={
+            <ProtectedRoute allowedRoles={["official"]}>
+              <OfficialDepartments />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="officials"
+          element={
+            <ProtectedRoute allowedRoles={["official"]}>
+              <OfficialDirectory />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="projects"
+          element={
+            <ProtectedRoute allowedRoles={["official"]}>
+              <OfficialProjectsFeedback />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="analytics"
+          element={
+            <ProtectedRoute allowedRoles={["official"]}>
+              <OfficialAnalytics />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="alerts"
+          element={
+            <ProtectedRoute allowedRoles={["official"]}>
+              <OfficialAlerts />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="safety"
+          element={
+            <ProtectedRoute allowedRoles={["official"]} requireSafetyOfficer={true}>
+              <OfficialSafetyRegister />
+            </ProtectedRoute>
+          }
+        />
         <Route path="settings" element={<OfficialSettings />} />
       </Route>
 
